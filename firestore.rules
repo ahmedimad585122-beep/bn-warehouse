@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && profile().status == 'active';
+    }
+    function isAdmin() { return active() && profile().role == 'admin'; }
+    function canIssue() { return active() && (profile().role == 'admin' || profile().role == 'engineer'); }
+
+    // Accounts: a user reads only their own profile; only admins manage accounts.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Warehouse stock (chunked documents) and counters.
+    match /stock/{chunk} {
+      allow read: if active();
+      allow write: if canIssue();
+    }
+    match /meta/{doc} {
+      allow read: if active();
+      allow write: if canIssue();
+    }
+
+    // Reference data: generators database and overhaul parts lists.
+    match /gens/{doc}  { allow read: if active(); allow write: if isAdmin(); }
+    match /kits/{doc}  { allow read: if active(); allow write: if isAdmin(); }
+
+    // Issue vouchers: engineers create; edit/cancel own; admin any; never deleted.
+    match /vouchers/{no} {
+      allow read: if active();
+      allow create: if canIssue() && request.resource.data.by == request.auth.uid;
+      allow update: if isAdmin() || (canIssue() && resource.data.by == request.auth.uid);
+      allow delete: if false;
+    }
+
+    // Shared parts lists.
+    match /lists/{id} {
+      allow read: if active();
+      allow create: if canIssue();
+      allow delete: if isAdmin() || (canIssue() && resource.data.by == request.auth.uid);
+      allow update: if false;
+    }
+
+    // Activity log: append-only.
+    match /log/{id} {
+      allow read: if active();
+      allow create: if canIssue();
+      allow update, delete: if false;
+    }
+  }
+}
