@@ -279,10 +279,10 @@ async function txIssue(draft,oldNo){return F.runTransaction(db,async tx=>{
 const cref=F.doc(db,'meta','counter'),oref=oldNo!=null?F.doc(db,'vouchers',String(oldNo)):null;
 const cs=await tx.get(cref),os=oref?await tx.get(oref):null,old=os&&os.exists()?os.data():null;
 if(oldNo!=null&&!old)throw new Error('Voucher not found');if(old&&old.x)throw new Error('This voucher is cancelled');if(old&&!canEdit(old))throw new Error('You cannot edit this voucher');
-const need=new Set();if(old)old.items.forEach(i=>(i.al||[]).forEach(([id])=>need.add(chunkOf(id))));draft.items.forEach(i=>(byPN[N(i.pn)]||[]).forEach(x=>need.add(chunkOf(x.id))));
+const need=new Set();if(old)old.items.forEach(i=>(i.al||[]).forEach(a=>need.add(chunkOf(a.id!=null?a.id:a[0]))));draft.items.forEach(i=>(byPN[N(i.pn)]||[]).forEach(x=>need.add(chunkOf(x.id))));
 const ch={};await Promise.all([...need].map(async c=>{const s=await tx.get(F.doc(db,'stock','c'+c));ch[c]=s.exists()?(s.data().lines||{}):{}}));
 const T={},rec=id=>T[id]!=null?T[id]:ch[chunkOf(id)]['L'+id].rec;
-if(old)old.items.forEach(i=>(i.al||[]).forEach(([id,t])=>{T[id]=rec(id)-t}));
+if(old)old.items.forEach(i=>(i.al||[]).forEach(a=>{const id=a.id!=null?a.id:a[0],t=a.t!=null?a.t:a[1];T[id]=rec(id)-t}));
 const items=draft.items.map(it=>{let n=it.q;const al=[],cand=[];for(const c in ch)for(const k in ch[c])if(N(ch[c][k].pn)==N(it.pn))cand.push(+k.slice(1));cand.sort((a,b)=>a-b);
 for(const id of cand){if(n<=0)break;const L=ch[chunkOf(id)]['L'+id],a=Math.max(0,L.qty-rec(id)),t=Math.min(n,a);if(t>0){T[id]=rec(id)+t;n-=t;al.push([id,t])}}
 if(n>0)throw new Error(`Not enough stock for ${it.pn} (short by ${n}). Someone may have just issued it.`);return{...it,al}});
@@ -293,7 +293,7 @@ tx.set(F.doc(db,'vouchers',String(no)),v);if(!old)tx.set(cref,{next:no+1});
 tx.set(F.doc(F.collection(db,'log')),{ts:now,t:new Date(now).toLocaleString('en-GB'),a:old?'Edited':'Created',no,d:`${TY[v.type]} · ${v.well||v.gen||'—'} · ${items.length} item(s)`,by:ME.name,uid:ME.uid});
 return v})}
 async function txCancel(no,reason){return F.runTransaction(db,async tx=>{const vr=F.doc(db,'vouchers',String(no)),vs=await tx.get(vr);if(!vs.exists())throw new Error('Voucher not found');const old=vs.data();if(old.x)throw new Error('Already cancelled');if(!canEdit(old))throw new Error('You cannot cancel this voucher');
-const ch={};await Promise.all([...new Set(old.items.flatMap(i=>(i.al||[]).map(([id])=>chunkOf(id))))].map(async c=>{const s=await tx.get(F.doc(db,'stock','c'+c));ch[c]=s.exists()?(s.data().lines||{}):{}}));
+const ch={};await Promise.all([...new Set(old.items.flatMap(i=>(i.al||[]).map(a=>chunkOf(a.id!=null?a.id:a[0]))))].map(async c=>{const s=await tx.get(F.doc(db,'stock','c'+c));ch[c]=s.exists()?(s.data().lines||{}):{}}));
 const upd={};old.items.forEach(i=>(i.al||[]).forEach(([id,t])=>{const c=chunkOf(id),p='lines.L'+id+'.rec',u=upd[c]=upd[c]||{},base=u[p]!=null?u[p]:(ch[c]['L'+id]?ch[c]['L'+id].rec:0);u[p]=base-t}));
 for(const c in upd)tx.update(F.doc(db,'stock','c'+c),upd[c]);tx.update(vr,{x:true,reason:reason||'',updatedAt:Date.now()});
 tx.set(F.doc(F.collection(db,'log')),{ts:Date.now(),t:new Date().toLocaleString('en-GB'),a:'Cancelled',no,d:reason||'—',by:ME.name,uid:ME.uid})})}
